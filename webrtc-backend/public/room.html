@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Room</title>
+</head>
+<body>
+  <div id="video-container">
+    <video id="localVideo" autoplay muted></video>
+    <video id="remoteVideo" autoplay></video>
+  </div>
+  <script>
+    const roomId = window.location.pathname.split('/').pop();
+    const ws = new WebSocket(`wss://192.168.0.100:3443`);
+
+    let localStream;
+    let remoteStream;
+    let peerConnection;
+    const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    ws.onopen = () => {
+      console.log(`WebSocket connected, joining room: ${roomId}`);
+      ws.send(JSON.stringify({ type: 'join', roomId }));
+    };
+    ws.onmessage = (message) => handleSignalingData(JSON.parse(message.data));
+    ws.onclose = () => alert('Connection closed');
+
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+      localStream = stream;
+      document.getElementById('localVideo').srcObject = localStream;
+      setupPeerConnection();
+    });
+
+    function setupPeerConnection() {
+      peerConnection = new RTCPeerConnection(configuration);
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({ type: 'ice-candidate', data: event.candidate }));
+        }
+      };
+      peerConnection.ontrack = (event) => {
+        if (!remoteStream) {
+          remoteStream = new MediaStream();
+          document.getElementById('remoteVideo').srcObject = remoteStream;
+        }
+        remoteStream.addTrack(event.track);
+      };
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+      console.log('Peer connection set up with local tracks');
+    }
+
+    function handleSignalingData(data) {
+      console.log(`Received signaling data: ${data.type}`);
+      switch (data.type) {
+        case 'offer':
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.data));
+          peerConnection.createAnswer().then(answer => {
+            peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: 'answer', data: answer }));
+          });
+          break;
+        case 'answer':
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.data));
+          break;
+        case 'ice-candidate':
+          peerConnection.addIceCandidate(new RTCIceCandidate(data.data));
+          break;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+// Signaling server connection
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Signaling Server</title>
+    <script src="https://cdn.socket.io/4.4.0/socket.io.min.js"></script>
+</head>
+<body>
+    <!-- Your HTML content -->
+    <script>
+        const socket = io.connect('http://localhost:3000/');
+        let localStream;
+        let peerConnection;
+
+// Get local media stream
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+            localStream = stream;
+            // Display local stream
+            document.getElementById('localVideo').srcObject = stream;
+            // Initialize WebRTC connection
+            initWebRTC();
+        });
+
+        // Initialize WebRTC
+        function initWebRTC() {
+            peerConnection = new RTCPeerConnection();
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            // Handle remote stream
+            peerConnection.ontrack = event => {
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+
+            // Handle ICE candidates
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', event.candidate);
+                }
+            };
+
+            // Create offer and set local description
+            peerConnection.createOffer().then(offer => {
+                return peerConnection.setLocalDescription(offer);
+            }).then(() => {
+                socket.emit('offer', peerConnection.localDescription);
+            });
+        }
+
+        // Handle offer from signaling server
+        socket.on('offer', offer => {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(offer)).then(() => {
+                return peerConnection.createAnswer();
+            }).then(answer => {
+                return peerConnection.setLocalDescription(answer);
+            }).then(() => {
+                socket.emit('answer', peerConnection.localDescription);
+            });
+        });
+
+        // Handle answer from signaling server
+        socket.on('answer', answer => {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        });
+
+        // Handle ICE candidate from signaling server
+        socket.on('ice-candidate', candidate => {
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        // Your other JavaScript code using socket.io
+    </script>
+</body>
+</html>
+
+
+

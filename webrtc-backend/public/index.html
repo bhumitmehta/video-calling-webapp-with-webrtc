@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Video Call</title>
+</head>
+<body>
+  <div id="create-room">
+    <button id="createRoomBtn">Create Room</button>
+  </div>
+  <div id="join-room">
+    <input type="text" id="roomIdInput" placeholder="Room ID">
+    <input type="password" id="roomPasswordInput" placeholder="Password (optional)">
+    <button id="joinRoomBtn">Join Room</button>
+  </div>
+  <div id="video-container" style="display:none;">
+    <video id="localVideo" autoplay></video>
+    <video id="remoteVideo" autoplay></video>
+  </div>
+
+  <script>
+    const createRoomBtn = document.getElementById('createRoomBtn');
+    const joinRoomBtn = document.getElementById('joinRoomBtn');
+    const roomIdInput = document.getElementById('roomIdInput');
+    const roomPasswordInput = document.getElementById('roomPasswordInput');
+
+    let localStream;
+    let remoteStream;
+    let peerConnection;
+    const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+    createRoomBtn.onclick = async () => {
+      const response = await fetch('/create-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: roomPasswordInput.value })
+      });
+      const data = await response.json();
+      alert(`Room created! Share this link: ${location.href}room/${data.roomId}`);
+    };
+
+    joinRoomBtn.onclick = async () => {
+      const response = await fetch('/join-room', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId: roomIdInput.value, password: roomPasswordInput.value })
+      });
+      const data = await response.json();
+      if (data.success) {
+        startCall(roomIdInput.value);
+      } else {
+        alert('Invalid room ID or password');
+      }
+    };
+
+    async function startCall(roomId) {
+      document.getElementById('join-room').style.display = 'none';
+      document.getElementById('video-container').style.display = 'block';
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById('localVideo').srcObject = localStream;
+      
+      const ws = new WebSocket('wss://192.168.0.100:3443');
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'join', roomId }));
+      ws.onmessage = (message) => handleSignalingData(JSON.parse(message.data), ws);
+      ws.onclose = () => alert('Connection closed');
+
+      peerConnection = new RTCPeerConnection(configuration);
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({ type: 'ice-candidate', data: event.candidate }));
+        }
+      };
+      peerConnection.ontrack = (event) => {
+        document.getElementById('remoteVideo').srcObject = event.streams[0];
+      };
+      localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    }
+
+    function handleSignalingData(data, ws) {
+      switch (data.type) {
+        case 'offer':
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.data));
+          peerConnection.createAnswer().then(answer => {
+            peerConnection.setLocalDescription(answer);
+            ws.send(JSON.stringify({ type: 'answer', data: answer }));
+          });
+          break;
+        case 'answer':
+          peerConnection.setRemoteDescription(new RTCSessionDescription(data.data));
+          break;
+        case 'ice-candidate':
+          peerConnection.addIceCandidate(new RTCIceCandidate(data.data));
+          break;
+      }
+    }
+  </script>
+</body>
+</html>
